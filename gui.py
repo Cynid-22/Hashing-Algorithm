@@ -102,6 +102,70 @@ class HashAlgorithm:
         return [algo['name'] for algo in cls._algorithms]
 
 
+class StatusIndicator(tk.Frame):
+    """Custom widget to display status with an icon and text."""
+    
+    def __init__(self, parent, *args, **kwargs):
+        super().__init__(parent, *args, **kwargs)
+        
+        # Icon canvas
+        self.canvas = tk.Canvas(self, width=20, height=20, highlightthickness=0)
+        self.canvas.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Status text
+        self.label = ttk.Label(self, text="")
+        self.label.pack(side=tk.LEFT)
+        
+        self._angle = 0
+        self._animating = False
+        self._animation_id = None
+        
+        # Initial state
+        self.set_complete()
+        
+    def set_calculating(self):
+        """Set status to calculating with a spinner."""
+        self._animating = True
+        self.label.config(text="Calculating...")
+        self._animate_spinner()
+        
+    def set_complete(self):
+        """Set status to complete with a green check mark."""
+        self._stop_animation()
+        self.label.config(text="Complete")
+        self._draw_check_mark()
+        
+    def _draw_check_mark(self):
+        """Draw a green check mark."""
+        self.canvas.delete("all")
+        # Draw circle
+        self.canvas.create_oval(2, 2, 18, 18, outline="green", width=2)
+        # Draw check
+        self.canvas.create_line(5, 10, 9, 14, 15, 6, fill="green", width=2)
+        
+    def _animate_spinner(self):
+        """Animate a rotating spinner."""
+        if not self._animating:
+            return
+            
+        self.canvas.delete("all")
+        
+        # Draw spinner arc
+        start = self._angle
+        extent = 270
+        self.canvas.create_arc(2, 2, 18, 18, start=start, extent=extent, outline="blue", width=2, style="arc")
+        
+        self._angle = (self._angle + 20) % 360
+        self._animation_id = self.after(50, self._animate_spinner)
+        
+    def _stop_animation(self):
+        """Stop the spinner animation."""
+        self._animating = False
+        if self._animation_id:
+            self.after_cancel(self._animation_id)
+            self._animation_id = None
+
+
 class SecureHashGUI:
     """Main GUI application for secure hash calculation."""
     
@@ -161,7 +225,7 @@ class SecureHashGUI:
     def _setup_window(self) -> None:
         """Configure the main window properties."""
         self.root.title("Secure Hash Algorithm GUI")
-        self.root.geometry("550x450")
+        self.root.geometry("750x450")
         self.root.resizable(False, False)
         
         # Remove window icon (delayed to prevent tkinter from overriding)
@@ -219,14 +283,14 @@ class SecureHashGUI:
         self.algorithm_combo.bind('<<ComboboxSelected>>', self._calculate_hash)
         
         # Input text section
-        ttk.Label(self.root, text="Input Text:").pack(
+        ttk.Label(self.root, text="Input:").pack(
             anchor=tk.W, padx=pad_x, pady=(pad_y, 5)
         )
         
         self.input_text = scrolledtext.ScrolledText(
             self.root,
             height=6,
-            width=60,
+            width=200,
             wrap=tk.WORD
         )
         self.input_text.pack(padx=pad_x, pady=(0, pad_y))
@@ -255,9 +319,13 @@ class SecureHashGUI:
         ).pack(side=tk.LEFT, padx=(10, 0))
         
         # Result section
-        ttk.Label(self.root, text="Hash Result:").pack(
-            anchor=tk.W, padx=pad_x, pady=(pad_y, 5)
-        )
+        result_label_frame = ttk.Frame(self.root)
+        result_label_frame.pack(fill=tk.X, padx=pad_x, pady=(pad_y, 5))
+        
+        ttk.Label(result_label_frame, text="Digest:").pack(side=tk.LEFT)
+        
+        self.status_indicator = StatusIndicator(result_label_frame)
+        self.status_indicator.pack(side=tk.RIGHT)
         
         result_frame = ttk.Frame(self.root)
         result_frame.pack(fill=tk.BOTH, expand=True, padx=pad_x, pady=(0, pad_y))
@@ -312,11 +380,16 @@ class SecureHashGUI:
                 
     def _calculate_hash(self, event=None) -> None:
         """Calculate the hash using the selected algorithm."""
+        # Update status to calculating
+        self.status_indicator.set_calculating()
+        self.root.update_idletasks()
+        
         algorithm = self.algorithm_var.get()
         algo_config = HashAlgorithm.get_algorithm_config(algorithm)
         
         if not algo_config:
             messagebox.showerror("Error", f"Unknown algorithm: {algorithm}")
+            self.status_indicator.set_complete()
             return
             
         try:
@@ -337,6 +410,7 @@ class SecureHashGUI:
                 hash_func = HashAlgorithm.get_hash_function(algorithm)
                 if not hash_func:
                     messagebox.showerror("Error", f"Failed to load algorithm: {algorithm}")
+                    self.status_indicator.set_complete()
                     return
                 hash_obj = hash_func()
                 hash_obj.update(input_bytes)
@@ -349,9 +423,11 @@ class SecureHashGUI:
                     hash_result = self._calculate_crc32(input_bytes)
                 else:
                     messagebox.showerror("Error", f"Unknown custom method: {method_name}")
+                    self.status_indicator.set_complete()
                     return
             else:
                 messagebox.showerror("Error", f"Unknown algorithm type: {algo_type}")
+                self.status_indicator.set_complete()
                 return
             
             # Display the result
@@ -359,6 +435,9 @@ class SecureHashGUI:
             
         except Exception as ex:
             messagebox.showerror("Error", f"Error calculating hash: {ex}")
+        finally:
+            # Update status to complete
+            self.status_indicator.set_complete()
             
     def _set_result(self, text: str) -> None:
         """
