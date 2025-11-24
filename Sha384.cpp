@@ -147,11 +147,9 @@ void sha384(string strMessage)
 
 int main()
 {
-    string input;
-    cout << "Input message: ";
-    while (getline(cin, input)) {
-        sha384(input);
-        cout << "\nInput message: ";
-    }
+    // Read entire input from stdin
+    string input((istreambuf_iterator<char>(cin)), istreambuf_iterator<char>());
+    sha384(input);
+    cout << endl;
     return 0;
 }
