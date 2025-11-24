@@ -24,7 +24,7 @@ template <typename T> //uint32_t or uint64_t
 T bitsToUsignedInt(const vector<bool>& bits, size_t start)
 {
     T value = 0;
-    for (size_t i = 0; i < 32; ++i) {
+    for (size_t i = 0; i < sizeof(T) * 8; ++i) {
         value <<= 1;
         if (bits[start + i])
             value |= 1;
