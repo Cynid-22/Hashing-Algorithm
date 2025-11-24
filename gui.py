@@ -216,6 +216,7 @@ class SecureHashGUI:
             width=20
         )
         self.algorithm_combo.pack(side=tk.LEFT, padx=(10, 0))
+        self.algorithm_combo.bind('<<ComboboxSelected>>', self._calculate_hash)
         
         # Input text section
         ttk.Label(self.root, text="Input Text:").pack(
@@ -229,6 +230,7 @@ class SecureHashGUI:
             wrap=tk.WORD
         )
         self.input_text.pack(padx=pad_x, pady=(0, pad_y))
+        self.input_text.bind('<Key>', lambda e: self.root.after_idle(self._calculate_hash))
         
         # Buttons frame
         button_frame = ttk.Frame(self.root)
@@ -308,7 +310,7 @@ class SecureHashGUI:
             except Exception as ex:
                 messagebox.showerror("Error", f"Error reading file: {ex}")
                 
-    def _calculate_hash(self) -> None:
+    def _calculate_hash(self, event=None) -> None:
         """Calculate the hash using the selected algorithm."""
         algorithm = self.algorithm_var.get()
         algo_config = HashAlgorithm.get_algorithm_config(algorithm)
