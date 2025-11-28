@@ -20,180 +20,171 @@ class HashCalculator:
     def __init__(self):
         self._current_process: Optional[subprocess.Popen] = None
     
-    def calculate_text_sync(self, algorithm: str, text: str) -> str:
+    def calculate_text_sync(self, algorithms: list[str], text: str) -> dict[str, str]:
         """
-        Calculate hash for text synchronously.
+        Calculate hashes for text synchronously.
         
         Args:
-            algorithm: Name of the algorithm
+            algorithms: List of algorithm names
             text: Input text
             
         Returns:
-            The calculated hash string
-            
-        Raises:
-            ValueError: If algorithm config is invalid
-            RuntimeError: If calculation fails
+            Dictionary mapping algorithm name to hash string
         """
-        algo_config = HashAlgorithm.get_algorithm_config(algorithm)
-        if not algo_config:
-            raise ValueError(f"Unknown algorithm: {algorithm}")
-            
+        results = {}
         input_bytes = text.encode('utf-8')
         
-        algo_type = algo_config.get('type')
-        
-        if algo_type == 'executable':
-            executable_name = algo_config.get('executable')
-            if not executable_name:
-                raise ValueError(f"No executable specified for {algorithm}")
+        for algo in algorithms:
+            algo_config = HashAlgorithm.get_algorithm_config(algo)
+            if not algo_config:
+                results[algo] = f"Error: Unknown algorithm"
+                continue
+                
+            algo_type = algo_config.get('type')
             
-            # Get the directory where this script is located
-            # Note: We assume this script is in the same dir as the executables
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            executable_path = os.path.join(script_dir, executable_name)
-            
-            if not os.path.exists(executable_path):
-                raise FileNotFoundError(
-                    f"Executable not found: {executable_name}\n"
-                    f"Please compile the C++ files first."
-                )
-            
-            try:
-                result = subprocess.run(
-                    [executable_path],
-                    input=input_bytes,
-                    capture_output=True,
-                    check=True,
-                    timeout=5
-                )
-                return result.stdout.decode('utf-8').strip()
-            except subprocess.TimeoutExpired:
-                raise RuntimeError("Hash calculation timed out")
-            except subprocess.CalledProcessError as e:
-                raise RuntimeError(f"Hash calculation failed: {e}")
-        else:
-            raise ValueError(f"Unknown algorithm type: {algo_type}")
+            if algo_type == 'executable':
+                executable_name = algo_config.get('executable')
+                if not executable_name:
+                    results[algo] = "Error: No executable specified"
+                    continue
+                
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                executable_path = os.path.join(script_dir, executable_name)
+                
+                if not os.path.exists(executable_path):
+                    results[algo] = "Error: Executable not found"
+                    continue
+                
+                try:
+                    result = subprocess.run(
+                        [executable_path],
+                        input=input_bytes,
+                        capture_output=True,
+                        check=True,
+                        timeout=5
+                    )
+                    results[algo] = result.stdout.decode('utf-8').strip()
+                except Exception as e:
+                    results[algo] = f"Error: {str(e)}"
+            elif algo_type == 'hashlib':
+                # Handle hashlib types for text too
+                hashlib_name = algo_config.get('hashlib_name')
+                h = hashlib.new(hashlib_name)
+                h.update(input_bytes)
+                results[algo] = h.hexdigest()
+            else:
+                results[algo] = f"Error: Unknown type {algo_type}"
+                
+        return results
 
     def calculate_file(self, 
-                      algorithm: str, 
+                      algorithms: list[str], 
                       file_path: str, 
                       progress_callback: Callable[[int], None],
                       check_cancel_callback: Callable[[], bool],
                       error_callback: Callable[[str], None],
-                      success_callback: Callable[[str], None]) -> None:
+                      success_callback: Callable[[dict[str, str]], None]) -> None:
         """
-        Calculate hash for a file. Designed to be run in a separate thread.
+        Calculate multiple hashes for a file in a single pass.
         
         Args:
-            algorithm: Algorithm name
+            algorithms: List of algorithm names
             file_path: Path to file
-            progress_callback: Function to call with progress percentage (0-100)
+            progress_callback: Function to call with progress percentage
             check_cancel_callback: Function that returns True if calculation should be cancelled
             error_callback: Function to call with error message
-            success_callback: Function to call with result hash
+            success_callback: Function to call with result dictionary
         """
-        # Map algorithm names to hashlib functions
+        # Map algorithm names to hashlib functions/constructors
         hashlib_map = {
             'SHA-256': hashlib.sha256,
             'SHA-384': hashlib.sha384,
             'SHA-512': hashlib.sha512
         }
         
-        try:
-            # Check if we have a fast Python implementation
-            if algorithm in hashlib_map:
-                self._calculate_file_hashlib(
-                    hashlib_map[algorithm], 
-                    file_path, 
-                    progress_callback, 
-                    check_cancel_callback, 
-                    success_callback
-                )
-            elif algorithm == 'CRC-32':
-                self._calculate_file_crc32(
-                    file_path, 
-                    progress_callback, 
-                    check_cancel_callback, 
-                    success_callback
-                )
+        # Separate algorithms into fast (hashlib/zlib) and slow (subprocess)
+        fast_algos = []
+        subprocess_algos = []
+        
+        for algo in algorithms:
+            if algo in hashlib_map or algo == 'CRC-32':
+                fast_algos.append(algo)
             else:
-                # Fallback to C++ subprocess
+                subprocess_algos.append(algo)
+        
+        results = {}
+        
+        try:
+            # 1. Process all fast algorithms in ONE pass
+            if fast_algos:
+                file_size = os.path.getsize(file_path)
+                CHUNK_SIZE = 16 * 1024 * 1024  # 16MB
+                bytes_processed = 0
+                last_progress = 0
+                
+                # Initialize hashers
+                hashers = {}
+                crc_val = 0
+                
+                for algo in fast_algos:
+                    if algo == 'CRC-32':
+                        crc_val = 0
+                    else:
+                        hashers[algo] = hashlib_map[algo]()
+                
+                import zlib
+                
+                with open(file_path, 'rb') as f:
+                    while True:
+                        if check_cancel_callback():
+                            return
+                        
+                        chunk = f.read(CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        
+                        # Update all hashers with the same chunk
+                        for algo in fast_algos:
+                            if algo == 'CRC-32':
+                                crc_val = zlib.crc32(chunk, crc_val)
+                            else:
+                                hashers[algo].update(chunk)
+                        
+                        bytes_processed += len(chunk)
+                        current_progress = int((bytes_processed / file_size) * 100)
+                        
+                        if current_progress >= last_progress + 5:
+                            progress_callback(current_progress)
+                            last_progress = current_progress
+                
+                # Finalize results
+                for algo in fast_algos:
+                    if algo == 'CRC-32':
+                        results[algo] = format(crc_val & 0xFFFFFFFF, '08x')
+                    else:
+                        results[algo] = hashers[algo].hexdigest()
+
+            # 2. Process subprocess algorithms (sequentially, unfortunately)
+            # Note: Running these in parallel with fast algos would be complex due to disk I/O contention
+            for algo in subprocess_algos:
+                if check_cancel_callback():
+                    return
+                    
+                # We reuse the single-file subprocess logic but adapt it
+                # For now, let's just run them one by one. 
+                # Ideally, we shouldn't mix fast and slow algos often.
                 self._calculate_file_subprocess(
-                    algorithm, 
+                    algo, 
                     file_path, 
-                    progress_callback, 
+                    progress_callback, # This might be jumpy if mixed with fast ones
                     check_cancel_callback, 
-                    success_callback
+                    lambda res: results.update({algo: res})
                 )
+            
+            success_callback(results)
+            
         except Exception as ex:
             error_callback(str(ex))
-
-    def _calculate_file_hashlib(self, 
-                               hash_constructor, 
-                               file_path: str, 
-                               progress_callback: Callable[[int], None],
-                               check_cancel_callback: Callable[[], bool],
-                               success_callback: Callable[[str], None]) -> None:
-        """Internal method for hashlib calculation."""
-        hash_func = hash_constructor()
-        file_size = os.path.getsize(file_path)
-        CHUNK_SIZE = 16 * 1024 * 1024  # 16MB
-        bytes_processed = 0
-        last_progress = 0
-        
-        with open(file_path, 'rb') as f:
-            while True:
-                if check_cancel_callback():
-                    return
-                
-                chunk = f.read(CHUNK_SIZE)
-                if not chunk:
-                    break
-                
-                hash_func.update(chunk)
-                
-                bytes_processed += len(chunk)
-                current_progress = int((bytes_processed / file_size) * 100)
-                
-                if current_progress >= last_progress + 5:
-                    progress_callback(current_progress)
-                    last_progress = current_progress
-        
-        success_callback(hash_func.hexdigest())
-
-    def _calculate_file_crc32(self, 
-                             file_path: str, 
-                             progress_callback: Callable[[int], None],
-                             check_cancel_callback: Callable[[], bool],
-                             success_callback: Callable[[str], None]) -> None:
-        """Internal method for CRC-32 calculation."""
-        import zlib
-        file_size = os.path.getsize(file_path)
-        CHUNK_SIZE = 16 * 1024 * 1024
-        bytes_processed = 0
-        last_progress = 0
-        crc = 0
-        
-        with open(file_path, 'rb') as f:
-            while True:
-                if check_cancel_callback():
-                    return
-                
-                chunk = f.read(CHUNK_SIZE)
-                if not chunk:
-                    break
-                
-                crc = zlib.crc32(chunk, crc)
-                
-                bytes_processed += len(chunk)
-                current_progress = int((bytes_processed / file_size) * 100)
-                
-                if current_progress >= last_progress + 5:
-                    progress_callback(current_progress)
-                    last_progress = current_progress
-        
-        success_callback(format(crc & 0xFFFFFFFF, '08x'))
 
     def _calculate_file_subprocess(self, 
                                   algorithm: str, 
@@ -216,11 +207,6 @@ class HashCalculator:
         
         if not os.path.exists(executable_path):
             raise FileNotFoundError(f"Executable not found: {executable_name}")
-        
-        file_size = os.path.getsize(file_path)
-        
-        if check_cancel_callback():
-            return
         
         # Launch C++ process
         proc = subprocess.Popen(
@@ -267,15 +253,12 @@ class HashCalculator:
                     
                     proc.stdin.write(chunk)
                     
-                    # We can't easily track bytes sent vs processed by C++ here accurately 
-                    # for progress bar without blocking, so we rely on C++ stderr reporting
-                    # But we can check the queue
                     while not progress_queue.empty():
                         progress_callback(progress_queue.get())
             
             proc.stdin.close()
             
-            # Wait for completion and final progress updates
+            # Wait for completion
             while True:
                 if check_cancel_callback():
                     proc.terminate()
@@ -289,7 +272,7 @@ class HashCalculator:
             stdout, _ = proc.communicate()
             
             if proc.returncode != 0:
-                raise RuntimeError("Hash calculation failed (subprocess returned non-zero)")
+                raise RuntimeError("Hash calculation failed")
             
             success_callback(stdout.decode('utf-8').strip())
             

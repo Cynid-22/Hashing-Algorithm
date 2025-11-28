@@ -48,8 +48,9 @@ class SecureHashGUI:
     def _setup_window(self) -> None:
         """Configure the main window properties."""
         self.root.title("Secure Hash Algorithm GUI")
-        self.root.geometry("750x500")  # Increased height for listbox
-        self.root.resizable(False, False)
+        self.root.geometry("750x500")
+        self.root.resizable(True, True)
+        self.root.minsize(600, 400)
         
         # Center the window on screen
         self.root.update_idletasks()
@@ -65,26 +66,26 @@ class SecureHashGUI:
         pad_x = 20
         pad_y = 10
         
-        # Top row: Algorithm and Mode selection
+        # Create Menu Bar
+        self.menu_bar = tk.Menu(self.root)
+        self.root.config(menu=self.menu_bar)
+        
+        # Hash Option Menu
+        self.hash_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_bar.add_cascade(label="Hash Option", menu=self.hash_menu)
+        
+        # Algorithm variables
+        self.algo_vars = {}
+        algorithms = HashAlgorithm.all()
+        
+        for algo in algorithms:
+            var = tk.BooleanVar(value=(algo == algorithms[0])) # Default first one selected
+            self.hash_menu.add_checkbutton(label=algo, variable=var, command=self._on_input_change)
+            self.algo_vars[algo] = var
+            
+        # Top row: Mode selection (Algorithm dropdown removed)
         top_frame = ttk.Frame(self.root)
         top_frame.pack(fill=tk.X, padx=pad_x, pady=(20, pad_y))
-        
-        # Algorithm selection
-        ttk.Label(top_frame, text="Algorithm:").pack(side=tk.LEFT)
-        
-        algorithms = HashAlgorithm.all()
-        default_algo = algorithms[0] if algorithms else ""
-        
-        self.algorithm_var = tk.StringVar(value=default_algo)
-        self.algorithm_combo = ttk.Combobox(
-            top_frame,
-            textvariable=self.algorithm_var,
-            values=HashAlgorithm.all(),
-            state="readonly",
-            width=15
-        )
-        self.algorithm_combo.pack(side=tk.LEFT, padx=(10, 20))
-        self.algorithm_combo.bind('<<ComboboxSelected>>', self._on_input_change)
         
         # Mode selection
         ttk.Label(top_frame, text="Mode:").pack(side=tk.LEFT)
@@ -279,7 +280,7 @@ class SecureHashGUI:
             self.file_listbox.delete(index)
             del self.selected_file_paths[index]
             
-        self._on_file_select()
+        self._on_file_select(None)
         self.status_indicator.set_input_changed()
         
     def _on_file_select(self, event=None) -> None:
@@ -290,9 +291,14 @@ class SecureHashGUI:
             self.remove_file_btn.config(state="disabled")
                 
     def _calculate_hash(self, event=None) -> None:
-        """Calculate the hash using the selected algorithm."""
-        algorithm = self.algorithm_var.get()
+        """Calculate the hash using the selected algorithms."""
+        selected_algos = [algo for algo, var in self.algo_vars.items() if var.get()]
         
+        if not selected_algos:
+            if self.mode_var.get() == "File" or event is None: # Only show warning if explicit click or file mode
+                 messagebox.showwarning("Warning", "No hash algorithm selected!")
+            return
+
         # For file mode, use threading; for text mode, run synchronously
         if self.mode_var.get() == "File":
             if not self.selected_file_paths:
@@ -341,13 +347,16 @@ class SecureHashGUI:
                         self.root.after(0, lambda: self.status_indicator.set_calculating(p, prefix))
                     
                     # Local success callback to append result
-                    def file_success_cb(hash_val):
-                        result_line = f"{file_path}:\n{hash_val}\n\n"
-                        self.root.after(0, self._append_result, result_line)
+                    def file_success_cb(results_dict):
+                        result_str = f"{file_path}:\n"
+                        for algo, hash_val in results_dict.items():
+                            result_str += f"{algo}: {hash_val}\n"
+                        result_str += "\n"
+                        self.root.after(0, self._append_result, result_str)
                     
                     # Calculate hash for this file
                     self.hasher.calculate_file(
-                        algorithm, 
+                        selected_algos, 
                         file_path, 
                         file_progress_cb, 
                         check_cancel_cb, 
@@ -370,8 +379,13 @@ class SecureHashGUI:
             
             try:
                 text = self.input_text.get('1.0', tk.END).rstrip('\n')
-                result = self.hasher.calculate_text_sync(algorithm, text)
-                self._set_result(result)
+                results = self.hasher.calculate_text_sync(selected_algos, text)
+                
+                result_str = ""
+                for algo, hash_val in results.items():
+                    result_str += f"{algo}: {hash_val}\n"
+                
+                self._set_result(result_str)
             except Exception as ex:
                 messagebox.showerror("Error", str(ex))
             finally:
