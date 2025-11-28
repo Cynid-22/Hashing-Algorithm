@@ -149,8 +149,14 @@ void sha384(string strMessage)
 int main()
 {
     initBinaryMode();
+    
     string input = readStdinToString();
+    size_t totalSize = input.length();
+    
+    reportProgress(0, totalSize);
     sha384(input);
+    reportProgress(totalSize, totalSize);
+    
     cout << endl;
     return 0;
 }

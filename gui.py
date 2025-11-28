@@ -10,6 +10,9 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import subprocess
 import json
 import os
+import threading
+import multiprocessing
+import  re
 from typing import Optional, Dict, List
 
 
@@ -104,11 +107,15 @@ class StatusIndicator(tk.Frame):
         # Initial state
         self.set_complete()
         
-    def set_calculating(self):
-        """Set status to calculating with a spinner."""
+    def set_calculating(self, progress: Optional[int] = None):
+        """Set status to calculating with a spinner and optional progress."""
         self._animating = True
-        self.label.config(text="Calculating...")
-        self._animate_spinner()
+        if progress is not None:
+            self.label.config(text=f"Calculating... {progress}%")
+        else:
+            self.label.config(text="Calculating...")
+        if not self._animation_id:
+            self._animate_spinner()
         
     def set_complete(self):
         """Set status to complete with a green check mark."""
@@ -174,8 +181,15 @@ class SecureHashGUI:
         """
         self.root = root
         self.selected_file_path: Optional[str] = None
+        self._calculation_thread: Optional[threading.Thread] = None
+        self._cancel_flag = False
+        self._current_process: Optional[subprocess.Popen] = None
+        # Calculate thread count: 20% of CPU cores, minimum 1
+        self._thread_count = max(1, int(multiprocessing.cpu_count() * 0.2))
         self._setup_window()
         self._create_widgets()
+        # Handle window closing
+        self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         
 
         
@@ -362,10 +376,23 @@ class SecureHashGUI:
                 
     def _calculate_hash(self, event=None) -> None:
         """Calculate the hash using the selected algorithm."""
-        # Update status to calculating
-        self.status_indicator.set_calculating()
-        self.root.update_idletasks()
+        # For file mode, use threading; for text mode, run synchronously
+        if self.selected_file_path is not None:
+            # File mode - use background thread
+            if self._calculation_thread and self._calculation_thread.is_alive():
+                return  # Already calculating
+            self._cancel_flag = False
+            self.status_indicator.set_calculating(0)
+            self._calculation_thread = threading.Thread(target=self._calculate_hash_threaded, daemon=True)
+            self._calculation_thread.start()
+        else:
+            # Text mode - run synchronously (fast enough)
+            self.status_indicator.set_calculating()
+            self.root.update_idletasks()
+            self._calculate_hash_sync()
         
+    def _calculate_hash_sync(self) -> None:
+        """Synchronous hash calculation for text mode."""
         algorithm = self.algorithm_var.get()
         algo_config = HashAlgorithm.get_algorithm_config(algorithm)
         
@@ -375,20 +402,9 @@ class SecureHashGUI:
             return
             
         try:
-            # Get input data
-            if self.selected_file_path is not None:
-                # Read file only when calculating hash
-                try:
-                    with open(self.selected_file_path, 'rb') as file:
-                        input_bytes = file.read()
-                except Exception as ex:
-                    messagebox.showerror("Error", f"Error reading file: {ex}")
-                    self.status_indicator.set_complete()
-                    return
-            else:
-                # Get text from input box and encode
-                input_data = self.input_text.get('1.0', tk.END).rstrip('\n')
-                input_bytes = input_data.encode('utf-8')
+            # Get text from input box and encode
+            input_data = self.input_text.get('1.0', tk.END).rstrip('\n')
+            input_bytes = input_data.encode('utf-8')
             
             # Calculate hash using C++ executable
             algo_type = algo_config.get('type')
@@ -448,6 +464,124 @@ class SecureHashGUI:
         finally:
             # Update status to complete
             self.status_indicator.set_complete()
+    
+    def _calculate_hash_threaded(self) -> None:
+        """Calculate hash in background thread with progress monitoring."""
+        algorithm = self.algorithm_var.get()
+        algo_config = HashAlgorithm.get_algorithm_config(algorithm)
+        
+        if not algo_config or algo_config.get('type') != 'executable':
+            self.root.after(0, lambda: messagebox.showerror("Error", "Invalid algorithm configuration"))
+            self.root.after(0, self.status_indicator.set_complete)
+            return
+        
+        executable_name = algo_config.get('executable')
+        if not executable_name:
+            self.root.after(0, lambda: messagebox.showerror("Error", "No executable specified"))
+            self.root.after(0, self.status_indicator.set_complete)
+            return
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        executable_path = os.path.join(script_dir, executable_name)
+        
+        if not os.path.exists(executable_path):
+            self.root.after(0,  lambda: messagebox.showerror("Error", f"Executable not found: {executable_name}"))
+            self.root.after(0, self.status_indicator.set_complete)
+            return
+        
+        try:
+            # Read file
+            with open(self.selected_file_path, 'rb') as f:
+                file_data = f.read()
+            
+            if self._cancel_flag:
+                return
+            
+            # Launch C++ process
+            proc = subprocess.Popen(
+                [executable_path],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0
+            )
+            
+            self._current_process = proc
+            
+            try:
+                # Write file data to stdin and close it
+                proc.stdin.write(file_data)
+                proc.stdin.close()
+                
+                # Monitor stderr for progress
+                progress_pattern = re.compile(r'PROGRESS:(\d+)')
+                stderr_lines = []
+                
+                while True:
+                    if self._cancel_flag:
+                        proc.terminate()
+                        proc.wait()
+                        return
+                    
+                    line = proc.stderr.readline()
+                    if not line:
+                        break
+                    
+                    line_str = line.decode('utf-8', errors='ignore').strip()
+                    stderr_lines.append(line_str)
+                    
+                    # Check for progress updates
+                    match = progress_pattern.match(line_str)
+                    if match:
+                        progress = int(match.group(1))
+                        self.root.after(0, self._update_progress, progress)
+                
+                # Wait for process to complete
+                stdout, _ = proc.communicate()
+                
+                if proc.returncode != 0:
+                    self.root.after(0, lambda: messagebox.showerror("Error", "Hash calculation failed"))
+                    self.root.after(0, self.status_indicator.set_complete)
+                    return
+                
+                # Get hash result from stdout
+                hash_result = stdout.decode('utf-8').strip()
+                
+                # Update GUI from main thread
+                self.root.after(0, self._set_result, hash_result)
+                self.root.after(0, self.status_indicator.set_complete)
+                
+            finally:
+                # Cleanup process
+                if proc.poll() is None:
+                    proc.terminate()
+                    proc.wait()
+                self._current_process = None
+                
+        except Exception as ex:
+            self.root.after(0, lambda: messagebox.showerror("Error", f"Error: {ex}"))
+            self.root.after(0, self.status_indicator.set_complete)
+    
+    def _update_progress(self, percentage: int) -> None:
+        """Update progress indicator from main thread."""
+        self.status_indicator.set_calculating(percentage)
+    
+    def _on_closing(self) -> None:
+        """Handle window closing with proper cleanup."""
+        # Set cancel flag
+        self._cancel_flag = True
+        
+        # Terminate subprocess if running
+        if self._current_process and self._current_process.poll() is None:
+            self._current_process.terminate()
+            self._current_process.wait(timeout=2.0)
+        
+        # Wait for calculation thread
+        if self._calculation_thread and self._calculation_thread.is_alive():
+            self._calculation_thread.join(timeout=2.0)
+        
+        # Destroy window
+        self.root.destroy()
             
     def _set_result(self, text: str) -> None:
         """

@@ -125,8 +125,14 @@ void sha256(string strMessage)
 int main()
 {
     initBinaryMode();
+    
     string input = readStdinToString();
+    size_t totalSize = input.length();
+    
+    reportProgress(0, totalSize);
     sha256(input);
+    reportProgress(totalSize, totalSize);
+    
     cout << endl;
     return 0;
 }
