@@ -14,11 +14,6 @@ A modern, high-performance graphical user interface for calculating cryptographi
 - **Memory Efficient**: 
   - Uses chunked streaming (16MB chunks) to process files.
   - Minimal memory footprint (uses ~16MB RAM regardless of file size).
-- **User Friendly**:
-  - Drag and drop support for files.
-  - Real-time progress bar for long operations.
-  - Responsive GUI that never freezes.
-- **Educational Value**: Includes raw C++ implementations of the hash algorithms for learning purposes.
 
 ## Performance Comparison
 
