@@ -145,6 +145,10 @@ class SecureHashGUI:
         self.add_file_btn.pack(side=tk.TOP, pady=(0, 5))
         ToolTip(self.add_file_btn, "Add file(s)")
         
+        self.add_folder_btn = ttk.Button(self.file_btn_frame, text="+F", width=3, command=self._add_folder)
+        self.add_folder_btn.pack(side=tk.TOP, pady=(0, 5))
+        ToolTip(self.add_folder_btn, "Add folder (files only)")
+        
         self.remove_file_btn = ttk.Button(self.file_btn_frame, text="-", width=3, command=self._remove_files, state="disabled")
         self.remove_file_btn.pack(side=tk.TOP)
         ToolTip(self.remove_file_btn, "Remove selected file(s)")
@@ -245,6 +249,25 @@ class SecureHashGUI:
             # Show input changed status
             self.status_indicator.set_input_changed()
             
+    def _add_folder(self) -> None:
+        """Open directory dialog and add all files in the folder."""
+        folder_path = filedialog.askdirectory(title="Select folder")
+        
+        if folder_path:
+            # Scan folder for files (non-recursive)
+            try:
+                for entry in os.scandir(folder_path):
+                    if entry.is_file():
+                        path = entry.path
+                        if path not in self.selected_file_paths:
+                            self.selected_file_paths.append(path)
+                            self.file_listbox.insert(tk.END, entry.name)
+                
+                # Show input changed status
+                self.status_indicator.set_input_changed()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to read folder: {e}")
+            
     def _remove_files(self) -> None:
         """Remove selected files from the list."""
         selection = self.file_listbox.curselection()
@@ -308,11 +331,14 @@ class SecureHashGUI:
                         break
                         
                     filename = os.path.basename(file_path)
+                    prefix = f"{i+1}/{total_files} "
                     
-                    # Update status
-                    self.root.after(0, lambda f=filename, idx=i: self.status_indicator.label.config(
-                        text=f"Processing {idx+1}/{total_files}: {f}..."
-                    ))
+                    # Update status initially
+                    self.root.after(0, lambda p=prefix: self.status_indicator.set_calculating(None, p))
+                    
+                    # Local progress callback with prefix
+                    def file_progress_cb(p):
+                        self.root.after(0, lambda: self.status_indicator.set_calculating(p, prefix))
                     
                     # Local success callback to append result
                     def file_success_cb(hash_val):
@@ -323,7 +349,7 @@ class SecureHashGUI:
                     self.hasher.calculate_file(
                         algorithm, 
                         file_path, 
-                        progress_cb, 
+                        file_progress_cb, 
                         check_cancel_cb, 
                         error_cb, 
                         file_success_cb

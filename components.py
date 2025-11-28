@@ -17,7 +17,7 @@ class StatusIndicator(tk.Frame):
         self.canvas.pack(side=tk.LEFT, padx=(0, 5))
         
         # Status text
-        self.label = ttk.Label(self, text="")
+        self.label = ttk.Label(self, text="", width=35, anchor="w")
         self.label.pack(side=tk.LEFT)
         
         self._angle = 0
@@ -27,13 +27,13 @@ class StatusIndicator(tk.Frame):
         # Initial state
         self.set_complete()
         
-    def set_calculating(self, progress: Optional[int] = None):
+    def set_calculating(self, progress: Optional[int] = None, prefix: str = ""):
         """Set status to calculating with a spinner and optional progress."""
         self._animating = True
         if progress is not None:
-            self.label.config(text=f"Calculating... {progress}%")
+            self.label.config(text=f"{prefix}Calculating... {progress}%")
         else:
-            self.label.config(text="Calculating...")
+            self.label.config(text=f"{prefix}Calculating...")
         if not self._animation_id:
             self._animate_spinner()
         
