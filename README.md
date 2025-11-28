@@ -32,7 +32,7 @@ Tested on a **5 GB .dat file** with SHA-256, this application significantly outp
 
 - Python 3.x
 - Tkinter (usually included with Python)
-- G++ Compiler (MinGW) - *Only required if you want to rebuild the C++ components*
+- G++ Compiler (MinGW)
 
 ## Installation
 
