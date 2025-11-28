@@ -173,7 +173,7 @@ class SecureHashGUI:
             root: The root tkinter window
         """
         self.root = root
-        self.binary_content: Optional[bytes] = None
+        self.selected_file_path: Optional[str] = None
         self._setup_window()
         self._create_widgets()
         
@@ -325,7 +325,7 @@ class SecureHashGUI:
             # Show text input widgets
             self.text_label.pack(anchor=tk.W, pady=(0, 5))
             self.input_text.pack(fill=tk.BOTH, expand=True)
-            self.binary_content = None
+            self.selected_file_path = None
         else:  # File mode
             # Show file input widgets
             self.file_label.pack(anchor=tk.W, pady=(0, 5))
@@ -347,23 +347,18 @@ class SecureHashGUI:
         self.root.after_idle(self._calculate_hash)
         
     def _browse_file(self) -> None:
-        """Open file dialog and load file for hashing."""
+        """Open file dialog and store file path for later hashing."""
         file_path = filedialog.askopenfilename(
             title="Select a file",
             filetypes=[("All files", "*.*")]
         )
         
         if file_path:
-            try:
-                # Always read as binary for consistent hashing
-                with open(file_path, 'rb') as file:
-                    self.binary_content = file.read()
-                    # Update file path display
-                    self.file_path_var.set(file_path)
-                    # Show input changed status
-                    self.status_indicator.set_input_changed()
-            except Exception as ex:
-                messagebox.showerror("Error", f"Error reading file: {ex}")
+            # Store file path without reading the file yet
+            self.selected_file_path = file_path
+            self.file_path_var.set(file_path)
+            # Show input changed status
+            self.status_indicator.set_input_changed()
                 
     def _calculate_hash(self, event=None) -> None:
         """Calculate the hash using the selected algorithm."""
@@ -381,9 +376,15 @@ class SecureHashGUI:
             
         try:
             # Get input data
-            if self.binary_content is not None:
-                # Use stored binary content
-                input_bytes = self.binary_content
+            if self.selected_file_path is not None:
+                # Read file only when calculating hash
+                try:
+                    with open(self.selected_file_path, 'rb') as file:
+                        input_bytes = file.read()
+                except Exception as ex:
+                    messagebox.showerror("Error", f"Error reading file: {ex}")
+                    self.status_indicator.set_complete()
+                    return
             else:
                 # Get text from input box and encode
                 input_data = self.input_text.get('1.0', tk.END).rstrip('\n')
@@ -480,7 +481,7 @@ class SecureHashGUI:
             self.file_path_var.set("No file selected")
         
         self._set_result('')
-        self.binary_content = None
+        self.selected_file_path = None
         self.status_indicator.set_input_changed()
             
     def run(self) -> None:
