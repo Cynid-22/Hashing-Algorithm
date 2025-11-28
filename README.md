@@ -17,7 +17,7 @@ A modern, high-performance graphical user interface for calculating cryptographi
 
 ## Performance Comparison
 
-Tested on a **5 GB .dat file**, this application significantly outperforms common alternatives:
+Tested on a **5 GB .dat file** with SHA-256, this application significantly outperforms common alternatives:
 
 | Tool | Time Taken |
 |------|------------|
@@ -59,7 +59,7 @@ Tested on a **5 GB .dat file**, this application significantly outperforms commo
 2. **Calculate a Hash**:
    - Select your desired algorithm (SHA-256, etc.) from the dropdown.
    - **Text Mode**: Type or paste text into the input field.
-   - **File Mode**: Click "Browse File" or drag and drop a file into the window.
+   - **File Mode**: Click "+" or "+F" to add files or folders to the window.
    - Click **Calculate Hash**.
 
 ## Project Structure
