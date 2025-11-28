@@ -7,168 +7,14 @@ Uses compiled C++ executables for hash calculations.
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
-import subprocess
-import json
-import os
 import threading
 import multiprocessing
-import re
-import queue
-import hashlib
-from typing import Optional, Dict, List
+from typing import Optional
 
-
-class HashAlgorithm:
-    """Dynamically loads hash algorithms from config file."""
-    
-    _algorithms: List[Dict] = []
-    _config_loaded = False
-    
-    @classmethod
-    def load_config(cls, config_path: str = "algorithms.json") -> None:
-        """
-        Load algorithms from the configuration file.
-        
-        Args:
-            config_path: Path to the algorithms configuration file
-        """
-        if cls._config_loaded:
-            return
-            
-        # Get the directory where this script is located
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        full_path = os.path.join(script_dir, config_path)
-        
-        try:
-            with open(full_path, 'r') as f:
-                config = json.load(f)
-                cls._algorithms = config.get('algorithms', [])
-                cls._config_loaded = True
-        except FileNotFoundError:
-            messagebox.showerror(
-                "Configuration Error",
-                f"Could not find {config_path}. Using default algorithms."
-            )
-            # Fallback to default algorithms
-            cls._algorithms = [
-                {"name": "SHA-256", "type": "hashlib", "hashlib_name": "sha256"},
-                {"name": "SHA-384", "type": "hashlib", "hashlib_name": "sha384"},
-                {"name": "SHA-512", "type": "hashlib", "hashlib_name": "sha512"}
-            ]
-            cls._config_loaded = True
-        except json.JSONDecodeError as e:
-            messagebox.showerror(
-                "Configuration Error",
-                f"Invalid JSON in {config_path}: {e}"
-            )
-            cls._algorithms = []
-            cls._config_loaded = True
-    
-    @classmethod
-    def get_algorithm_config(cls, name: str) -> Optional[Dict]:
-        """
-        Get the configuration for a specific algorithm.
-        
-        Args:
-            name: The algorithm name
-            
-        Returns:
-            The algorithm configuration dictionary or None
-        """
-        cls.load_config()
-        for algo in cls._algorithms:
-            if algo['name'] == name:
-                return algo
-        return None
-    
-    @classmethod
-    def all(cls) -> List[str]:
-        """Return all available algorithm names."""
-        cls.load_config()
-        return [algo['name'] for algo in cls._algorithms]
-
-
-class StatusIndicator(tk.Frame):
-    """Custom widget to display status with an icon and text."""
-    
-    def __init__(self, parent, *args, **kwargs):
-        super().__init__(parent, *args, **kwargs)
-        
-        # Icon canvas
-        self.canvas = tk.Canvas(self, width=20, height=20, highlightthickness=0)
-        self.canvas.pack(side=tk.LEFT, padx=(0, 5))
-        
-        # Status text
-        self.label = ttk.Label(self, text="")
-        self.label.pack(side=tk.LEFT)
-        
-        self._angle = 0
-        self._animating = False
-        self._animation_id = None
-        
-        # Initial state
-        self.set_complete()
-        
-    def set_calculating(self, progress: Optional[int] = None):
-        """Set status to calculating with a spinner and optional progress."""
-        self._animating = True
-        if progress is not None:
-            self.label.config(text=f"Calculating... {progress}%")
-        else:
-            self.label.config(text="Calculating...")
-        if not self._animation_id:
-            self._animate_spinner()
-        
-    def set_complete(self):
-        """Set status to complete with a green check mark."""
-        self._stop_animation()
-        self.label.config(text="Complete")
-        self._draw_check_mark()
-    
-    def set_input_changed(self):
-        """Set status to input changed with a red X."""
-        self._stop_animation()
-        self.label.config(text="Input changed")
-        self._draw_x_mark()
-        
-    def _draw_check_mark(self):
-        """Draw a green check mark."""
-        self.canvas.delete("all")
-        # Draw circle
-        self.canvas.create_oval(2, 2, 18, 18, outline="green", width=2)
-        # Draw check
-        self.canvas.create_line(5, 10, 9, 14, 15, 6, fill="green", width=2)
-    
-    def _draw_x_mark(self):
-        """Draw a red X mark."""
-        self.canvas.delete("all")
-        # Draw circle
-        self.canvas.create_oval(2, 2, 18, 18, outline="red", width=2)
-        # Draw X
-        self.canvas.create_line(6, 6, 14, 14, fill="red", width=2)
-        self.canvas.create_line(14, 6, 6, 14, fill="red", width=2)
-        
-    def _animate_spinner(self):
-        """Animate a rotating spinner."""
-        if not self._animating:
-            return
-            
-        self.canvas.delete("all")
-        
-        # Draw spinner arc
-        start = self._angle
-        extent = 270
-        self.canvas.create_arc(2, 2, 18, 18, start=start, extent=extent, outline="blue", width=2, style="arc")
-        
-        self._angle = (self._angle + 20) % 360
-        self._animation_id = self.after(50, self._animate_spinner)
-        
-    def _stop_animation(self):
-        """Stop the spinner animation."""
-        self._animating = False
-        if self._animation_id:
-            self.after_cancel(self._animation_id)
-            self._animation_id = None
+# Import from new modules
+from config import HashAlgorithm
+from components import StatusIndicator
+from hasher import HashCalculator
 
 
 class SecureHashGUI:
@@ -185,15 +31,18 @@ class SecureHashGUI:
         self.selected_file_path: Optional[str] = None
         self._calculation_thread: Optional[threading.Thread] = None
         self._cancel_flag = False
-        self._current_process: Optional[subprocess.Popen] = None
+        
+        # Initialize logic engine
+        self.hasher = HashCalculator()
+        
         # Calculate thread count: 20% of CPU cores, minimum 1
         self._thread_count = max(1, int(multiprocessing.cpu_count() * 0.2))
+        
         self._setup_window()
         self._create_widgets()
+        
         # Handle window closing
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
-        
-
         
     def _setup_window(self) -> None:
         """Configure the main window properties."""
@@ -378,207 +227,60 @@ class SecureHashGUI:
                 
     def _calculate_hash(self, event=None) -> None:
         """Calculate the hash using the selected algorithm."""
+        algorithm = self.algorithm_var.get()
+        
         # For file mode, use threading; for text mode, run synchronously
         if self.selected_file_path is not None:
             # File mode - use background thread
             if self._calculation_thread and self._calculation_thread.is_alive():
                 return  # Already calculating
+            
             self._cancel_flag = False
             self.status_indicator.set_calculating(0)
-            self._calculation_thread = threading.Thread(target=self._calculate_hash_threaded, daemon=True)
+            
+            # Define callbacks for the thread
+            def progress_cb(p):
+                self.root.after(0, self.status_indicator.set_calculating, p)
+                
+            def check_cancel_cb():
+                return self._cancel_flag
+                
+            def error_cb(msg):
+                self.root.after(0, lambda: messagebox.showerror("Error", msg))
+                self.root.after(0, self.status_indicator.set_complete)
+                
+            def success_cb(res):
+                self.root.after(0, self._set_result, res)
+                self.root.after(0, self.status_indicator.set_complete)
+            
+            # Start thread
+            self._calculation_thread = threading.Thread(
+                target=self.hasher.calculate_file,
+                args=(algorithm, self.selected_file_path, progress_cb, check_cancel_cb, error_cb, success_cb),
+                daemon=True
+            )
             self._calculation_thread.start()
         else:
-            # Text mode - run synchronously (fast enough)
+            # Text mode - run synchronously
             self.status_indicator.set_calculating()
             self.root.update_idletasks()
-            self._calculate_hash_sync()
-        
-    def _calculate_hash_sync(self) -> None:
-        """Synchronous hash calculation for text mode."""
-        algorithm = self.algorithm_var.get()
-        algo_config = HashAlgorithm.get_algorithm_config(algorithm)
-        
-        if not algo_config:
-            messagebox.showerror("Error", f"Unknown algorithm: {algorithm}")
-            self.status_indicator.set_complete()
-            return
             
-        try:
-            # Get text from input box and encode
-            input_data = self.input_text.get('1.0', tk.END).rstrip('\n')
-            input_bytes = input_data.encode('utf-8')
-            
-            # Calculate hash using C++ executable
-            algo_type = algo_config.get('type')
-            
-            if algo_type == 'executable':
-                # Get executable name
-                executable_name = algo_config.get('executable')
-                if not executable_name:
-                    messagebox.showerror("Error", f"No executable specified for {algorithm}")
-                    self.status_indicator.set_complete()
-                    return
-                
-                # Get the directory where this script is located
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                executable_path = os.path.join(script_dir, executable_name)
-                
-                # Check if executable exists
-                if not os.path.exists(executable_path):
-                    messagebox.showerror(
-                        "Error", 
-                        f"Executable not found: {executable_name}\\n\\n"
-                        f"Please compile the C++ files first.\\n"
-                        f"Example: g++ -o {executable_name} {executable_name.replace('.exe', '.cpp')}"
-                    )
-                    self.status_indicator.set_complete()
-                    return
-                
-                # Run the executable with input data via stdin
-                try:
-                    result = subprocess.run(
-                        [executable_path],
-                        input=input_bytes,
-                        capture_output=True,
-                        check=True,
-                        timeout=5
-                    )
-                    # Get hash from stdout and strip whitespace
-                    hash_result = result.stdout.decode('utf-8').strip()
-                except subprocess.TimeoutExpired:
-                    messagebox.showerror("Error", f"Hash calculation timed out")
-                    self.status_indicator.set_complete()
-                    return
-                except subprocess.CalledProcessError as e:
-                    messagebox.showerror("Error", f"Hash calculation failed: {e}")
-                    self.status_indicator.set_complete()
-                    return
-            else:
-                messagebox.showerror("Error", f"Unknown algorithm type: {algo_type}")
+            try:
+                text = self.input_text.get('1.0', tk.END).rstrip('\n')
+                result = self.hasher.calculate_text_sync(algorithm, text)
+                self._set_result(result)
+            except Exception as ex:
+                messagebox.showerror("Error", str(ex))
+            finally:
                 self.status_indicator.set_complete()
-                return
-            
-            # Display the result
-            self._set_result(hash_result)
-            
-        except Exception as ex:
-            messagebox.showerror("Error", f"Error calculating hash: {ex}")
-        finally:
-            # Update status to complete
-            self.status_indicator.set_complete()
-    
-    def _calculate_hash_threaded(self) -> None:
-        """Calculate hash in background thread using fast hashlib implementation."""
-        algorithm = self.algorithm_var.get()
-        
-        # Map algorithm names to hashlib functions
-        hashlib_map = {
-            'SHA-256': hashlib.sha256,
-            'SHA-384': hashlib.sha384,
-            'SHA-512': hashlib.sha512
-        }
-        
-        # Check if we have a fast Python implementation
-        if algorithm in hashlib_map:
-            # Use fast hashlib (compiled C implementation)
-            hash_func = hashlib_map[algorithm]()
-            
-            try:
-                file_size = os.path.getsize(self.selected_file_path)
-                CHUNK_SIZE = 16 * 1024 * 1024  # 16MB chunks
-                bytes_processed = 0
-                last_progress = 0
-                
-                with open(self.selected_file_path, 'rb') as f:
-                    while True:
-                        if self._cancel_flag:
-                            return
-                        
-                        chunk = f.read(CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        
-                        # Hash the chunk (FAST!)
-                        hash_func.update(chunk)
-                        
-                        # Update progress
-                        bytes_processed += len(chunk)
-                        current_progress = int((bytes_processed / file_size) * 100)
-                        
-                        if current_progress >= last_progress + 5:
-                            self.root.after(0, self._update_progress, current_progress)
-                            last_progress = current_progress
-                
-                # Get final hash
-                hash_result = hash_func.hexdigest()
-                
-                # Update GUI
-                self.root.after(0, self._set_result, hash_result)
-                self.root.after(0, self.status_indicator.set_complete)
-                
-            except Exception as ex:
-                self.root.after(0, lambda: messagebox.showerror("Error", f"Error: {ex}"))
-                self.root.after(0, self.status_indicator.set_complete)
-        
-        elif algorithm == 'CRC-32':
-            # Use Python's zlib.crc32 (also fast compiled C)
-            import zlib
-            
-            try:
-                file_size = os.path.getsize(self.selected_file_path)
-                CHUNK_SIZE = 16 * 1024 * 1024
-                bytes_processed = 0
-                last_progress = 0
-                crc = 0
-                
-                with open(self.selected_file_path, 'rb') as f:
-                    while True:
-                        if self._cancel_flag:
-                            return
-                        
-                        chunk = f.read(CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        
-                        # Update CRC (FAST!)
-                        crc = zlib.crc32(chunk, crc)
-                        
-                        # Update progress
-                        bytes_processed += len(chunk)
-                        current_progress = int((bytes_processed / file_size) * 100)
-                        
-                        if current_progress >= last_progress + 5:
-                            self.root.after(0, self._update_progress, current_progress)
-                            last_progress = current_progress
-                
-                # Get final CRC (convert to unsigned 32-bit and format as hex)
-                hash_result = format(crc & 0xFFFFFFFF, '08x')
-                
-                # Update GUI
-                self.root.after(0, self._set_result, hash_result)
-                self.root.after(0, self.status_indicator.set_complete)
-                
-            except Exception as ex:
-                self.root.after(0, lambda: messagebox.showerror("Error", f"Error: {ex}"))
-                self.root.after(0, self.status_indicator.set_complete)
-        
-        else:
-            # Fallback to C++ subprocess for custom algorithms
-            self._calculate_hash_threaded_subprocess()
-    
-    def _update_progress(self, percentage: int) -> None:
-        """Update progress indicator from main thread."""
-        self.status_indicator.set_calculating(percentage)
     
     def _on_closing(self) -> None:
         """Handle window closing with proper cleanup."""
         # Set cancel flag
         self._cancel_flag = True
         
-        # Terminate subprocess if running
-        if self._current_process and self._current_process.poll() is None:
-            self._current_process.terminate()
-            self._current_process.wait(timeout=2.0)
+        # Terminate any subprocesses in the hasher
+        self.hasher.terminate_subprocess()
         
         # Wait for calculation thread
         if self._calculation_thread and self._calculation_thread.is_alive():
@@ -588,12 +290,7 @@ class SecureHashGUI:
         self.root.destroy()
             
     def _set_result(self, text: str) -> None:
-        """
-        Set the result text box value.
-        
-        Args:
-            text: The text to display
-        """
+        """Set the result text box value."""
         self.result_text.config(state="normal")
         self.result_text.delete('1.0', tk.END)
         self.result_text.insert('1.0', text)
