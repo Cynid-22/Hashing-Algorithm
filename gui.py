@@ -32,12 +32,16 @@ class SecureHashGUI:
         self.selected_file_paths: list[str] = []
         self._calculation_thread: Optional[threading.Thread] = None
         self._cancel_flag = False
+        self._debounce_timer = None
         
         # Initialize logic engine
         self.hasher = HashCalculator()
         
         # Calculate thread count: 20% of CPU cores, minimum 1
         self._thread_count = max(1, int(multiprocessing.cpu_count() * 0.2))
+        
+        # Auto-calculate toggle variable
+        self.auto_calc_var = tk.BooleanVar(value=False)
         
         self._setup_window()
         self._create_widgets()
@@ -170,6 +174,13 @@ class SecureHashGUI:
             command=self._clear_all
         ).pack(side=tk.LEFT)
         
+        self.auto_calc_check = ttk.Checkbutton(
+            button_frame,
+            text="Calculate Immediately",
+            variable=self.auto_calc_var,
+            command=self._on_auto_calc_toggle
+        )
+        
         # Result section
         result_label_frame = ttk.Frame(self.root)
         result_label_frame.pack(fill=tk.X, padx=pad_x, pady=(pad_y, 5))
@@ -215,12 +226,17 @@ class SecureHashGUI:
             # Show text input widgets
             self.text_label.pack(anchor=tk.W, pady=(0, 5))
             self.input_text.pack(fill=tk.BOTH, expand=True)
+            self.calculate_button.pack(side=tk.LEFT, padx=(0, 10))
+            self.auto_calc_check.pack(side=tk.LEFT, padx=(10, 0))
+            self._on_auto_calc_toggle() # Update button state
         else:  # File mode
             # Show file input widgets
             self.file_label.pack(anchor=tk.W, pady=(0, 5))
             self.file_frame.pack(fill=tk.BOTH, expand=True)
             # Show calculate button in file mode
             self.calculate_button.pack(side=tk.LEFT, padx=(0, 10))
+            self.auto_calc_check.pack_forget()
+            self.calculate_button.config(state="normal") # Always enabled in file mode
         
         # Clear result and set input changed status
         self._set_result("")
@@ -231,8 +247,19 @@ class SecureHashGUI:
         # Show input changed status
         self.status_indicator.set_input_changed()
         # Schedule hash calculation (only for text mode auto-calc)
+        if self.mode_var.get() == "Text" and self.auto_calc_var.get():
+            if self._debounce_timer:
+                self.root.after_cancel(self._debounce_timer)
+            self._debounce_timer = self.root.after(200, self._calculate_hash)
+        
+    def _on_auto_calc_toggle(self) -> None:
+        """Handle auto-calculate checkbox toggle."""
         if self.mode_var.get() == "Text":
-            self.root.after_idle(self._calculate_hash)
+            if self.auto_calc_var.get():
+                self.calculate_button.config(state="disabled")
+                self._calculate_hash()
+            else:
+                self.calculate_button.config(state="normal")
         
     def _add_files(self) -> None:
         """Open file dialog and add selected files."""
