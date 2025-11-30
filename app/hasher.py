@@ -49,7 +49,7 @@ class HashCalculator:
                     continue
                 
                 script_dir = os.path.dirname(os.path.abspath(__file__))
-                executable_path = os.path.join(script_dir, executable_name)
+                executable_path = os.path.join(script_dir, '..', 'bin', executable_name)
                 
                 if not os.path.exists(executable_path):
                     results[algo] = "Error: Executable not found"
@@ -203,7 +203,7 @@ class HashCalculator:
             raise ValueError("No executable specified")
         
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        executable_path = os.path.join(script_dir, executable_name)
+        executable_path = os.path.join(script_dir, '..', 'bin', executable_name)
         
         if not os.path.exists(executable_path):
             raise FileNotFoundError(f"Executable not found: {executable_name}")
