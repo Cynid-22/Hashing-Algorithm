@@ -39,15 +39,11 @@ inline uint32_t H(uint32_t x, uint32_t y, uint32_t z) { return x ^ y ^ z; }
 inline uint32_t I(uint32_t x, uint32_t y, uint32_t z) { return y ^ (x | ~z); }
 
 // Process a single 64-byte block
-void transform(const uint8_t* block, uint32_t& a0, uint32_t& b0, uint32_t& c0, uint32_t& d0) {
-    uint32_t M[16];
-    // Decode 64 bytes into 16 words (little-endian)
-    for (int j = 0; j < 16; ++j) {
-        M[j] = block[j * 4] |
-               (block[j * 4 + 1] << 8) |
-               (block[j * 4 + 2] << 16) |
-               (block[j * 4 + 3] << 24);
-    }
+#pragma GCC optimize("unroll-loops")
+__attribute__((always_inline))
+inline void transform(const uint8_t* block, uint32_t& a0, uint32_t& b0, uint32_t& c0, uint32_t& d0) {
+    // Direct zero-copy access (Little Endian)
+    const uint32_t* M = reinterpret_cast<const uint32_t*>(block);
 
     uint32_t A = a0;
     uint32_t B = b0;
@@ -113,85 +109,91 @@ int main(int argc, char* argv[]) {
     uint32_t d0 = 0x10325476;
     
     uint64_t totalBytes = 0;
-    uint8_t buffer[64];
+    
+    // 4MB buffer (reduced loop overhead)
+    const size_t BUFFER_SIZE = 4 * 1024 * 1024;
+    vector<uint8_t> buffer(BUFFER_SIZE);
     
     // Report initial progress
     if (totalExpectedSize > 0) reportProgress(0, totalExpectedSize);
     
-    // Read from stdin in 64-byte chunks
-    while (cin.read((char*)buffer, 64)) {
-        totalBytes += 64;
-        transform(buffer, a0, b0, c0, d0);
+    while (cin) {
+        cin.read((char*)buffer.data(), BUFFER_SIZE);
+        size_t bytesRead = cin.gcount();
+        if (bytesRead == 0) break;
         
-        // Report progress periodically
+        size_t offset = 0;
+        while (offset + 64 <= bytesRead) {
+            transform(buffer.data() + offset, a0, b0, c0, d0);
+            offset += 64;
+            totalBytes += 64;
+        }
+        
+        // Report progress
         if (totalExpectedSize > 0) {
             reportProgress(totalBytes, totalExpectedSize);
         }
-    }
-    
-    // Handle remaining bytes
-    size_t bytesRead = cin.gcount();
-    totalBytes += bytesRead;
-    
-    // Padding
-    uint8_t padding[128]; // Max padding needed is 64 + 8 = 72 bytes, but we might cross block boundary
-    memset(padding, 0, 128);
-    
-    // Copy remaining bytes to padding buffer
-    memcpy(padding, buffer, bytesRead);
-    
-    // Add '1' bit
-    padding[bytesRead] = 0x80;
-    
-    size_t paddingLen;
-    if (bytesRead < 56) {
-        paddingLen = 56 - bytesRead;
-    } else {
-        paddingLen = 120 - bytesRead;
-    }
-    
-    // Add length (bits) at the end of the last block
-    uint64_t totalBits = totalBytes * 8;
-    size_t lengthOffset = bytesRead + paddingLen + 8 - 8; // Position for length
-    
-    // If we crossed a block boundary, we process the first block
-    if (bytesRead >= 56) {
-        transform(padding, a0, b0, c0, d0);
-        // Move to next block for length
-        lengthOffset = 64 - 8; // End of second block
-        // We need to put length at the end of the SECOND block (index 56-63 relative to second block start)
-        // But wait, my padding logic above is slightly complex. Let's simplify.
-    }
-    
-    // Let's redo padding logic to be cleaner
-    // We have 'bytesRead' bytes in 'buffer'.
-    // We copy them to a temp buffer that can hold up to 2 blocks (128 bytes)
-    uint8_t finalBlock[128];
-    memset(finalBlock, 0, 128);
-    memcpy(finalBlock, buffer, bytesRead);
-    
-    finalBlock[bytesRead] = 0x80;
-    
-    if (bytesRead < 56) {
-        // Fits in one block
-        // Append length at bytes 56-63
-        for (int i = 0; i < 8; ++i) {
-            finalBlock[56 + i] = (totalBits >> (i * 8)) & 0xFF;
-        }
-        transform(finalBlock, a0, b0, c0, d0);
-    } else {
-        // Need two blocks
-        // First block is padded with 0s after 0x80
-        transform(finalBlock, a0, b0, c0, d0);
         
-        // Second block has length at end
-        memset(finalBlock, 0, 64); // Clear first block content
-        // Length at bytes 56-63 of second block (which is now at index 56 of finalBlock array if we reused it, 
-        // but we just cleared it so it's effectively index 56)
-        for (int i = 0; i < 8; ++i) {
-            finalBlock[56 + i] = (totalBits >> (i * 8)) & 0xFF;
+        // Handle remaining bytes (partial block at end of buffer)
+        // If we have remaining bytes, they must be the end of the file
+        // because we read in multiples of 64 unless EOF.
+        // Wait, 1MB is multiple of 64, so this only happens at EOF.
+        if (offset < bytesRead) {
+            // This is the last partial block
+            // We need to handle padding here
+            size_t remaining = bytesRead - offset;
+            
+            // Copy remaining to a temp buffer for padding
+            uint8_t finalBlock[128];
+            memset(finalBlock, 0, 128);
+            memcpy(finalBlock, buffer.data() + offset, remaining);
+            
+            totalBytes += remaining;
+            
+            // Add '1' bit
+            finalBlock[remaining] = 0x80;
+            
+            uint64_t totalBits = totalBytes * 8;
+            
+            if (remaining < 56) {
+                // Fits in one block
+                for (int i = 0; i < 8; ++i) {
+                    finalBlock[56 + i] = (totalBits >> (i * 8)) & 0xFF;
+                }
+                transform(finalBlock, a0, b0, c0, d0);
+            } else {
+                // Need two blocks
+                transform(finalBlock, a0, b0, c0, d0);
+                
+                memset(finalBlock, 0, 64);
+                for (int i = 0; i < 8; ++i) {
+                    finalBlock[56 + i] = (totalBits >> (i * 8)) & 0xFF;
+                }
+                transform(finalBlock, a0, b0, c0, d0);
+            }
+            break; // Done
         }
-        transform(finalBlock, a0, b0, c0, d0);
+    }
+    
+    // If exact multiple of 64 bytes, we still need padding
+    if (totalBytes % 64 == 0) {
+         uint8_t finalBlock[64];
+         memset(finalBlock, 0, 64);
+         finalBlock[0] = 0x80;
+         
+         uint64_t totalBits = totalBytes * 8;
+         
+         // If 0x80 leaves enough room for length (56 bytes)
+         // 0 < 56, so yes.
+         // Wait, if totalBytes % 64 == 0, we are at start of new block.
+         // So we have 0 bytes of data in this block.
+         // 0 bytes data + 1 byte (0x80) = 1 byte used.
+         // 1 < 56, so we fit in one block.
+         
+         for (int i = 0; i < 8; ++i) {
+             finalBlock[56 + i] = (totalBits >> (i * 8)) & 0xFF;
+         }
+         transform(finalBlock, a0, b0, c0, d0);
     }
 
     // Output

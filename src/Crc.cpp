@@ -27,20 +27,6 @@ void generateCRC32Table(uint32_t table[256])
     }
 }
 
-// Calculate CRC-32 checksum
-uint32_t calculateCRC32(const string& data, uint32_t table[256])
-{
-    uint32_t crc = 0xFFFFFFFF; // Initial value
-
-    for (char c : data) {
-        uint8_t byte = static_cast<uint8_t>(c);
-        uint8_t index = (crc ^ byte) & 0xFF;
-        crc = (crc >> 8) ^ table[index];
-    }
-
-    return crc ^ 0xFFFFFFFF; // Final XOR
-}
-
 // Convert CRC-32 value to hexadecimal string
 string crc32ToHex(uint32_t crc)
 {
@@ -49,29 +35,56 @@ string crc32ToHex(uint32_t crc)
     return ss.str();
 }
 
-// Main CRC-32 function
-void crc32(const string& strMessage)
-{
-    uint32_t crcTable[256];
-    generateCRC32Table(crcTable);
-    
-    uint32_t crc = calculateCRC32(strMessage, crcTable);
-    
-    cout << crc32ToHex(crc);
-    cout.flush();  // Ensure output is flushed immediately
-}
-
-int main()
+int main(int argc, char* argv[])
 {
     initBinaryMode();
     
-    string input = readStdinToString();
-    size_t totalSize = input.length();
+    // Check for file size argument
+    size_t totalExpectedSize = 0;
+    if (argc > 1) {
+        try {
+            totalExpectedSize = std::stoull(argv[1]);
+        } catch (...) {
+            totalExpectedSize = 0;
+        }
+    }
     
-    reportProgress(0, totalSize);
-    crc32(input);
-    reportProgress(totalSize, totalSize);
+    uint32_t crcTable[256];
+    generateCRC32Table(crcTable);
     
+    uint32_t crc = 0xFFFFFFFF; // Initial value
+    uint64_t totalBytes = 0;
+    
+    // 1MB buffer
+    const size_t BUFFER_SIZE = 1024 * 1024;
+    vector<uint8_t> buffer(BUFFER_SIZE);
+    
+    // Report initial progress
+    if (totalExpectedSize > 0) reportProgress(0, totalExpectedSize);
+    
+    while (cin) {
+        cin.read((char*)buffer.data(), BUFFER_SIZE);
+        size_t bytesRead = cin.gcount();
+        if (bytesRead == 0) break;
+        
+        for (size_t i = 0; i < bytesRead; ++i) {
+            uint8_t index = (crc ^ buffer[i]) & 0xFF;
+            crc = (crc >> 8) ^ crcTable[index];
+        }
+        
+        totalBytes += bytesRead;
+        
+        // Report progress
+        if (totalExpectedSize > 0) {
+            reportProgress(totalBytes, totalExpectedSize);
+        }
+    }
+    
+    crc ^= 0xFFFFFFFF; // Final XOR
+    
+    cout << crc32ToHex(crc);
+    cout.flush();
     cout << endl;
+    
     return 0;
 }

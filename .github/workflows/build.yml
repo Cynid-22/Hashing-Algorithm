@@ -1,0 +1,61 @@
+name: Build Hashing Algorithm
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install MinGW
+      run: |
+        choco install mingw -y
+        refreshenv
+    
+    - name: Verify g++ installation
+      run: g++ --version
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+    
+    - name: Compile C++ executables
+      run: |
+        if not exist bin mkdir bin
+        g++ -O3 -march=native -o bin/Sha256.exe src/Sha256.cpp
+        g++ -O3 -march=native -o bin/Sha384.exe src/Sha384.cpp
+        g++ -O3 -march=native -o bin/Sha512.exe src/Sha512.cpp
+        g++ -O3 -march=native -o bin/Crc.exe src/Crc.cpp
+        g++ -O3 -march=native -o bin/Md5.exe src/Md5.cpp
+        g++ -O3 -march=native -o bin/Sha1.exe src/Sha1.cpp
+      shell: cmd
+    
+    - name: Build PyInstaller package
+      run: pyinstaller --clean HashingGUI.spec
+      shell: cmd
+    
+    - name: Upload compiled executables
+      uses: actions/upload-artifact@v4
+      with:
+        name: hashing-executables
+        path: bin/*.exe
+    
+    - name: Upload PyInstaller build
+      uses: actions/upload-artifact@v4
+      with:
+        name: HashingGUI-Windows
+        path: dist/
