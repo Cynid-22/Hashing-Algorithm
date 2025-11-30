@@ -1,11 +1,8 @@
-name: Build Hashing Algorithm
+name: Build and Release
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:
+  release:
+    types: [created]
 
 jobs:
   build-windows:
@@ -48,14 +45,16 @@ jobs:
       run: pyinstaller --clean HashingGUI.spec
       shell: cmd
     
-    - name: Upload compiled executables
-      uses: actions/upload-artifact@v4
-      with:
-        name: hashing-executables
-        path: bin/*.exe
+    - name: Create distribution archive
+      run: |
+        cd dist
+        tar -czf HashingGUI-Windows.tar.gz *
+        cd ..
+      shell: bash
     
-    - name: Upload PyInstaller build
-      uses: actions/upload-artifact@v4
+    - name: Upload release asset
+      uses: softprops/action-gh-release@v1
       with:
-        name: HashingGUI-Windows
-        path: dist/
+        files: dist/HashingGUI-Windows.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
