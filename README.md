@@ -92,4 +92,4 @@ A modern, high-performance graphical user interface for calculating cryptographi
 
 ## License
 
-Open source for educational and personal use.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
